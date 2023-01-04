@@ -15,6 +15,7 @@ type TradingEvent struct {
 
 type KeyEvent struct {
 	UserID    string
+	Exchange  string
 	PublicKey string
 	SecretKey string
 }
