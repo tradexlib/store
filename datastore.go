@@ -38,7 +38,7 @@ func (s *DataStore) SetCandles(candles types.Candles, id, exchange string) error
 		return err
 	}
 
-	_, err = conn.Do("HSET", s.candlesKey(exchange), id, buf.Bytes())
+	_, err = conn.Do("HSET", s.candlesKey(exchange), id, buf.String())
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (s *DataStore) SetSymbol(symbol types.Symbol, exchange string) error {
 		return err
 	}
 
-	_, err = conn.Do("HSET", s.symbolsKey(exchange), symbol.ID, buf.Bytes())
+	_, err = conn.Do("HSET", s.symbolsKey(exchange), symbol.ID, buf.String())
 	if err != nil {
 		return err
 	}
@@ -82,6 +82,8 @@ func (s *DataStore) SetSymbols(symbols types.Symbols, exchange string) error {
 	var conn = s.pool.Get()
 	defer func() { _ = conn.Close() }()
 
+	_ = conn.Send("MULTI")
+
 	for _, symbol := range symbols {
 		var buf bytes.Buffer
 
@@ -90,7 +92,7 @@ func (s *DataStore) SetSymbols(symbols types.Symbols, exchange string) error {
 			return err
 		}
 
-		err = conn.Send("HSET", s.symbolsKey(exchange), symbol.ID, buf.Bytes())
+		err = conn.Send("HSET", s.symbolsKey(exchange), symbol.ID, buf.String())
 		if err != nil {
 			return err
 		}
