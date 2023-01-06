@@ -42,12 +42,15 @@ func (s *KeyStore) SubscribeEvents() error {
 }
 
 func (s *KeyStore) UpdateKeys(event KeyEvent) error {
+	var conn = s.pool.Get()
+	defer func() { _ = conn.Close() }()
+
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(event)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.pool.Get().Do("PUBLISH", keyStoreEvents, buf.String())
+	_, err = conn.Do("PUBLISH", keyStoreEvents, buf.String())
 	return err
 }

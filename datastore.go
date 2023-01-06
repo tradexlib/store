@@ -169,23 +169,29 @@ func (s *DataStore) SubscribeEvents() error {
 }
 
 func (s *DataStore) AnnounceReport(event TradingEvent) error {
+	var conn = s.pool.Get()
+	defer func() { _ = conn.Close() }()
+
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(event)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.pool.Get().Do("PUBLISH", tradingEvents, buf.String())
+	_, err = conn.Do("PUBLISH", tradingEvents, buf.String())
 	return err
 }
 
 func (s *DataStore) AnnounceEvent(event MarketEvent) error {
+	var conn = s.pool.Get()
+	defer func() { _ = conn.Close() }()
+
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(event)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.pool.Get().Do("PUBLISH", marketEvents, buf.String())
+	_, err = conn.Do("PUBLISH", marketEvents, buf.String())
 	return err
 }
