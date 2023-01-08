@@ -60,6 +60,15 @@ func (s *DataStore) GetCandles(id, exchange string) (types.Candles, error) {
 	return candles, err
 }
 
+func (s *DataStore) GetPrice(id, exchange string) float64 {
+	candles, _ := s.GetCandles(id, exchange)
+	if len(candles) > 0 {
+		return candles[0].Close
+	}
+
+	return 0
+}
+
 func (s *DataStore) SetSymbol(symbol types.Symbol, exchange string) error {
 	var buf bytes.Buffer
 	var conn = s.pool.Get()
