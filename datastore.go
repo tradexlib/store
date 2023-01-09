@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"time"
 
 	"go.sadegh.io/expi/types"
 
@@ -26,6 +27,34 @@ func (s *DataStore) symbolsKey(exchange string) string {
 
 func (s *DataStore) candlesKey(exchange string) string {
 	return fmt.Sprintf("C:%s", exchange)
+}
+
+func (s *DataStore) changeHistoryKey(id, exchange string) string {
+	return fmt.Sprintf("CH:%s:%s", id, exchange)
+}
+
+func (s *DataStore) SetChangeHistory(id, exchange string) error {
+	var conn = s.pool.Get()
+	defer func() { _ = conn.Close() }()
+
+	_, err := conn.Do("SET", s.changeHistoryKey(id, exchange), time.Now().String())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *DataStore) GetChangeHistory(id, exchange string) (time.Time, error) {
+	var conn = s.pool.Get()
+	defer func() { _ = conn.Close() }()
+
+	b, err := redis.Bytes(conn.Do("GET", s.changeHistoryKey(id, exchange)))
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return time.Parse(time.Layout, string(b))
 }
 
 func (s *DataStore) SetCandles(candles types.Candles, id, exchange string) error {
