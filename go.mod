@@ -3,12 +3,15 @@ module github.com/tradexlib/store
 go 1.19
 
 require (
-	github.com/gomodule/redigo v1.8.9
+	github.com/redis/go-redis/v9 v9.5.1
 	go.sadegh.io/expi v0.0.5
 	go.sadegh.io/x v0.0.1
 )
 
 require (
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/gomodule/redigo v1.8.9 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/dig v1.15.0 // indirect
 	go.uber.org/fx v1.18.2 // indirect
