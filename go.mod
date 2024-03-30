@@ -1,4 +1,4 @@
-module go.evoc.xyz/store
+module github.com/tradexlib/store
 
 go 1.19
 
