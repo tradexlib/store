@@ -2,23 +2,23 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"fmt"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.sadegh.io/expi/types"
-
-	"github.com/gomodule/redigo/redis"
 )
 
 type DataStore struct {
-	pool    *redis.Pool
+	client  *redis.Client
 	market  chan MarketEvent
 	trading chan TradingEvent
 }
 
-func NewDataStore(pool *redis.Pool) *DataStore {
-	return &DataStore{pool: pool, market: make(chan MarketEvent), trading: make(chan TradingEvent)}
+func NewDataStore(client *redis.Client) *DataStore {
+	return &DataStore{client: client, market: make(chan MarketEvent), trading: make(chan TradingEvent)}
 }
 
 func (s *DataStore) symbolsKey(exchange string) string {
@@ -34,53 +34,28 @@ func (s *DataStore) changeHistoryKey(id, exchange string) string {
 }
 
 func (s *DataStore) SetChangeHistory(id, exchange string) error {
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
-	_, err := conn.Do("SET", s.changeHistoryKey(id, exchange), time.Now().String())
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return s.client.Set(context.TODO(), s.changeHistoryKey(id, exchange), time.Now().Format(time.RFC3339), -1).Err()
 }
 
 func (s *DataStore) GetChangeHistory(id, exchange string) (time.Time, error) {
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
-	b, err := redis.Bytes(conn.Do("GET", s.changeHistoryKey(id, exchange)))
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	return time.Parse(time.Layout, string(b))
+	history := s.client.Get(context.TODO(), s.changeHistoryKey(id, exchange)).String()
+	return time.Parse(time.RFC3339, history)
 }
 
 func (s *DataStore) SetCandles(candles types.Candles, id, exchange string) error {
 	var buf bytes.Buffer
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
 
 	err := gob.NewEncoder(&buf).Encode(candles)
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.Do("HSET", s.candlesKey(exchange), id, buf.String())
-	if err != nil {
-		return err
-	}
-
-	return err
+	return s.client.HSet(context.TODO(), s.candlesKey(exchange), id, buf.String()).Err()
 }
 
 func (s *DataStore) GetCandles(id, exchange string) (types.Candles, error) {
 	var candles types.Candles
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
-	b, err := redis.Bytes(conn.Do("HGET", s.candlesKey(exchange), id))
+	b, err := s.client.HGet(context.TODO(), s.candlesKey(exchange), id).Bytes()
 	if err != nil {
 		return candles, err
 	}
@@ -100,28 +75,15 @@ func (s *DataStore) GetPrice(id, exchange string) float64 {
 
 func (s *DataStore) SetSymbol(symbol types.Symbol, exchange string) error {
 	var buf bytes.Buffer
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
 	err := gob.NewEncoder(&buf).Encode(symbol)
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.Do("HSET", s.symbolsKey(exchange), symbol.ID, buf.String())
-	if err != nil {
-		return err
-	}
-
-	return err
+	return s.client.HSet(context.TODO(), s.symbolsKey(exchange), symbol.ID, buf.String()).Err()
 }
 
 func (s *DataStore) SetSymbols(symbols types.Symbols, exchange string) error {
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
-	_ = conn.Send("MULTI")
-
 	for _, symbol := range symbols {
 		var buf bytes.Buffer
 
@@ -130,22 +92,18 @@ func (s *DataStore) SetSymbols(symbols types.Symbols, exchange string) error {
 			return err
 		}
 
-		err = conn.Send("HSET", s.symbolsKey(exchange), symbol.ID, buf.String())
+		err = s.client.HSet(context.TODO(), s.symbolsKey(exchange), symbol.ID, buf.String()).Err()
 		if err != nil {
 			return err
 		}
 	}
-
-	_, err := conn.Do("EXEC")
-	return err
+	return nil
 }
 
 func (s *DataStore) GetSymbol(id, exchange string) (types.Symbol, error) {
 	var symbol types.Symbol
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
 
-	b, err := redis.Bytes(conn.Do("HGET", s.symbolsKey(exchange), id))
+	b, err := s.client.HGet(context.TODO(), s.symbolsKey(exchange), id).Bytes()
 	if err != nil {
 		return symbol, err
 	}
@@ -155,18 +113,14 @@ func (s *DataStore) GetSymbol(id, exchange string) (types.Symbol, error) {
 }
 
 func (s *DataStore) GetSymbols(exchange string) (types.Symbols, error) {
+	vals := s.client.HVals(context.TODO(), s.symbolsKey(exchange)).Val()
+
+	var err error
 	var symbols types.Symbols
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
-	b, err := redis.ByteSlices(conn.Do("HVALS", s.symbolsKey(exchange)))
-	if err != nil {
-		return symbols, err
-	}
-
-	for _, d := range b {
+	for _, val := range vals {
 		var symbol types.Symbol
-		err = gob.NewDecoder(bytes.NewReader(d)).Decode(&symbol)
+		buffer := bytes.NewBuffer([]byte(val))
+		err = gob.NewDecoder(buffer).Decode(&symbol)
 		symbols = append(symbols, symbol)
 	}
 
@@ -182,54 +136,42 @@ func (s *DataStore) TradingChan() chan TradingEvent {
 }
 
 func (s *DataStore) SubscribeEvents() error {
-	conn := &redis.PubSubConn{Conn: s.pool.Get()}
-	if err := conn.Subscribe(marketEvents, tradingEvents); err != nil {
-		return err
-	}
-
-	for conn.Conn.Err() == nil {
-		switch e := conn.Receive().(type) {
-		case redis.Message:
-			switch e.Channel {
-			case marketEvents:
-				var event MarketEvent
-				_ = gob.NewDecoder(bytes.NewReader(e.Data)).Decode(&event)
-				s.market <- event
-			case tradingEvents:
-				var event TradingEvent
-				_ = gob.NewDecoder(bytes.NewReader(e.Data)).Decode(&event)
-				s.trading <- event
-			}
+	sub := s.client.Subscribe(context.TODO(), marketEvents, tradingEvents)
+	for {
+		event, err := sub.ReceiveMessage(context.TODO())
+		if err != nil {
+			continue
+		}
+		buffer := bytes.NewBuffer([]byte(event.Payload))
+		switch event.Channel {
+		case marketEvents:
+			var marketEvent MarketEvent
+			_ = gob.NewDecoder(buffer).Decode(&marketEvent)
+			s.market <- marketEvent
+		case tradingEvents:
+			var tradingEvent TradingEvent
+			_ = gob.NewDecoder(buffer).Decode(&tradingEvent)
+			s.trading <- tradingEvent
 		}
 	}
-
-	return conn.Conn.Close()
 }
 
 func (s *DataStore) AnnounceReport(event TradingEvent) error {
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(event)
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.Do("PUBLISH", tradingEvents, buf.String())
-	return err
+	return s.client.Publish(context.TODO(), tradingEvents, buf.String()).Err()
 }
 
 func (s *DataStore) AnnounceEvent(event MarketEvent) error {
-	var conn = s.pool.Get()
-	defer func() { _ = conn.Close() }()
-
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(event)
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.Do("PUBLISH", marketEvents, buf.String())
-	return err
+	return s.client.Publish(context.TODO(), marketEvents, buf.String()).Err()
 }
