@@ -38,8 +38,7 @@ func (s *DataStore) SetChangeHistory(id, exchange string) error {
 }
 
 func (s *DataStore) GetChangeHistory(id, exchange string) (time.Time, error) {
-	history := s.client.Get(context.TODO(), s.changeHistoryKey(id, exchange)).String()
-	return time.Parse(time.RFC3339, history)
+	return s.client.Get(context.TODO(), s.changeHistoryKey(id, exchange)).Time()
 }
 
 func (s *DataStore) SetCandles(candles types.Candles, id, exchange string) error {
